@@ -131,7 +131,6 @@ def deconit(uin, win, dt, nt=None, tshift=10, f0=2.0, itmax=400, minderr=0.001, 
         sumsq_i = sumsq
 
         it = it + 1
-    print(p0)
     p_flt = gfilter(p0, nfft, gaussF, dt)
     p_flt = phaseshift(p_flt, nfft, dt, tshift)
 
@@ -151,11 +150,13 @@ def dorf(r, z):
     rf, rms, it = deconit(r.data, z.data, r.delta, tshift=-r.b, f0=2, itmax=200)
     time_end=time.time()
     print('time cost',time_end-time_start,'s')
-    plt.plot(time_axis, rf, lw=4)
-    rr = np.loadtxt('t.txt')
-    plt.plot(time_axis, rr, '--', lw=2)
+    plt.plot(time_axis, rf, lw=3, label='seispy')
+    rr = SACTrace.read('rf.sac')
+    plt.plot(time_axis, rr.data, '--', lw=1.5, label='ForRF')
+    plt.legend()
     plt.xlim(-2,30)
-    plt.savefig('r.png', dpi=300)
+    plt.xlabel('Time (s)')
+    plt.savefig('cmp.png', dpi=300)
 
 
 def dofilter(r, f0=2):

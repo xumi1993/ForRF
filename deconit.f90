@@ -13,7 +13,7 @@ subroutine deconit(utr, wtr, nt, dt, tshift, f0, &
     real :: dt, f0, tshift, minderr, df, powerU, &
                         sumsq_i, sumsq, d_error, amp
     real, dimension(:), allocatable :: uflt, &
-                                                   wflt, rflt, rw, p0, pflt
+                                       wflt, rflt, rw, p0, pflt
     complex, dimension(:), allocatable :: wf, gauss
     real, dimension(nt) :: pflt_re
 
@@ -35,11 +35,11 @@ subroutine deconit(utr, wtr, nt, dt, tshift, f0, &
     uflt(1:nt) = utr
     wflt(1:nt) = wtr
 
-    ! wf = FFT%Forward(real(wflt))
+    wf = FFT%Forward(wflt)
     
     call filter(uflt, nft, dt, fft, gauss)
     call filter(wflt, nft, dt, fft, gauss)
-    wf = FFT%Forward(real(wflt))
+    ! wf = FFT%Forward(real(wflt))
     rflt = uflt
 
     powerU = sum(uflt ** 2)
@@ -74,7 +74,6 @@ subroutine deconit(utr, wtr, nt, dt, tshift, f0, &
     call phs_shift(p0, tshift, nft, nft, dt)
     call fft%Destory()
     rfi = p0(1:nt)
-    ! call print_array(p0, nft)
 
 end subroutine deconit
 
@@ -103,6 +102,9 @@ program make_rf
     call deconit(real(datar), real(dataz), npt1, real(dt1), &
                  real(tshift), real(f0), &
                  maxit, real(minderr), rfi, it, rms)
-    call dwsac1('rf.sac', rfi, npt1, -tshift, dt1)
+    do i=1,npt1
+        print *, rfi(i)
+    enddo
+    call dwsac1('rf.sac', dble(rfi), npt1, -tshift, dt1)
     
 end program make_rf
