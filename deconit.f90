@@ -109,9 +109,6 @@ program make_rf
     call deconit(real(datar), real(dataz), npt1, real(dt1), &
                  real(tshift), real(f0), &
                  maxit, real(minderr), rfi, it, rms)
-    do i=1,npt1
-        print *, rfi(i)
-    enddo
     call dwsac1('rf.sac', dble(rfi), npt1, -tshift, dt1)
     
 end program make_rf
