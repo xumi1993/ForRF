@@ -1,5 +1,12 @@
 subroutine deconit(utr, wtr, nt, dt, tshift, f0, &
                    maxit, minderr, rfi, it, rms)
+    ! -----------------------------------------
+    ! Time iterative deconvolution for receiver 
+    ! function calculation. Code refer to that in
+    ! CPS330, but change the FFT to mkl FFT.
+    ! 
+    ! Dec 31, 2021 Mijian Xu @ Nanyang Technological University
+    ! ------------------------------------------- 
     use interpolation_mod, only: npow2, phs_shift
     use MKL_FFT
 
