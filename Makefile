@@ -13,7 +13,7 @@ interpolation_mod:
 	$(FC) interpolation_mod.f90 -c
 
 make_rf:
-	$(FC) -I$(INC) mkl_dfti.o deconit.f90 interpolation_mod.o drwsac.f90 mklfft.o utils.f90 -o make_rf $(FCFLAG) -mkl
+	$(FC) deconit.f90 interpolation_mod.o drwsac.f90 mklfft.o utils.f90 -o make_rf $(FCFLAG) -mkl
 
 clean:
 	rm make_rf *.mod *.o
