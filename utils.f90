@@ -60,56 +60,54 @@ subroutine correl(r, w, nft, fftcls, rw)
 end subroutine correl
 
 
-! subroutine phaseshift(x, nft, dt, tshift, fftcls)
-!     use MKL_FFT
-!     implicit none
-!     Type(CLS_FFT) :: fftcls 
-!     integer :: nft, shift_i, i
-!     real :: dt, tshift, p
-!     real, dimension(nft), intent(inout) :: x
-!     complex, dimension(nft) :: z1, z2
-!     real, dimension(nft) :: p1
-
-!     z1 = fftcls%forward(x)
-!     shift_i = tshift/dt
-!     do i=1,nft
-!         p = 2*3.14159265*i*shift_i/nft
-!         z2(i) = cmplx(cos(p), -1*sin(p))
-!     enddo
-!     z1 = z1 * z2
-!     z1 = z1/nft
-!     x = fftcls%backward(z1) / cos(2*3.14159265*shift_i/nft)
-
-! end subroutine phaseshift
-
-subroutine phaseshift( x, nft, dt, shift, fftcls)
+subroutine phaseshift(x, nft, dt, tshift, fftcls)
     use MKL_FFT
+    implicit none
     Type(CLS_FFT) :: fftcls 
-    complex, dimension(nft) :: Xf
-    real, dimension(nft) :: p, x
-    real :: p1
-    integer shift_i
-    pi=3.141592653
-    xf = fftcls%forward(x)
-    ! do i=1, nft/2
-    !     xf(nft-i-1) = cmplx(real(xf(i)), -aimag(xf(i)))
-    ! enddo
+    integer :: nft, shift_i, i
+    real :: dt, tshift, p
+    real, dimension(nft), intent(inout) :: x
+    complex, dimension(nft) :: z1
 
-    shift_i=int((shift/dt)+0.5)
-    n21 = nft/2+1
-    do i=1,n21
-        p1 = 2 * pi * i * shift_i / nft
-        Xf(i) = Xf(i) * cmplx(cos(p1), -sin(p1))
-        if(i >= 1)then
-            xf(nft + 2 - i) = conjg(xf(i))
-        endif
+    z1 = fftcls%forward(x)
+     shift_i=int((tshift/dt)+0.5)
+    do i=1,nft
+        p = 2*3.14159265*i*shift_i/nft
+        z1(i) = z1(i) * cmplx(cos(p), -sin(p))
     enddo
-    xf(n21) = cmplx(real(xf(n21)),0.0)
-    Xf = Xf / nft
-    x = fftcls%backward(xf)
-    x = x / cos(2 * pi * shift_i / nft)
+    z1 = z1/nft
+    x = fftcls%backward(z1) / cos(2*3.14159265*shift_i/nft)
 
-end subroutine 
+end subroutine phaseshift
+
+! subroutine phaseshift( x, nft, dt, shift, fftcls)
+!     use MKL_FFT
+!     Type(CLS_FFT) :: fftcls 
+!     complex, dimension(nft) :: Xf
+!     real, dimension(nft) :: p, x
+!     real :: p1
+!     integer shift_i
+!     pi=3.141592653
+!     xf = fftcls%forward(x)
+!     ! do i=1, nft/2
+!     !     xf(nft-i-1) = cmplx(real(xf(i)), -aimag(xf(i)))
+!     ! enddo
+
+!     shift_i=int((shift/dt)+0.5)
+!     n21 = nft/2+1
+!     do i=1,n21
+!         p1 = 2 * pi * i * shift_i / nft
+!         Xf(i) = Xf(i) * cmplx(cos(p1), -sin(p1))
+!         if(i >= 1)then
+!             xf(nft + 2 - i) = conjg(xf(i))
+!         endif
+!     enddo
+!     xf(n21) = cmplx(real(xf(n21)),0.0)
+!     Xf = Xf / nft
+!     x = fftcls%backward(xf)
+!     x = x / cos(2 * pi * shift_i / nft)
+
+! end subroutine 
 
 
 subroutine print_array(x, nt)

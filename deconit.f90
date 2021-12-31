@@ -17,12 +17,11 @@ subroutine deconit(utr, wtr, nt, dt, tshift, f0, &
     real, dimension(nt), intent(in) ::utr, wtr
     real, dimension(maxit), intent(out) ::rms
     real, dimension(nt), intent(out) ::rfi
-    real :: dt, f0, tshift, minderr, df, powerU, &
-                        sumsq_i, sumsq, d_error, amp
+    real :: dt, f0, tshift, minderr, powerU, &
+            sumsq_i, sumsq, d_error, amp
     real, dimension(:), allocatable :: uflt, &
                                        wflt, rflt, rw, p0, pflt
     complex, dimension(:), allocatable :: wf, gauss
-    real, dimension(nt) :: pflt_re
 
     nft=nt
     call npow2(nft)
@@ -34,7 +33,6 @@ subroutine deconit(utr, wtr, nt, dt, tshift, f0, &
     if (.not. allocated(rw))  allocate(rw(nft))
     if (.not. allocated(p0))  allocate(p0(nft))
     if (.not. allocated(pflt))  allocate(pflt(nft))
-    ! if (.not. allocated(pflt_re))  allocate(pflt_re(nft))
 
     call FFT%Create(nft)
     call gaussfilter(dt, nft, f0, gauss)
@@ -77,7 +75,7 @@ subroutine deconit(utr, wtr, nt, dt, tshift, f0, &
     end do iter
     it = i
     call filter(p0, nft, dt, fft, gauss)
-    ! call print_array(p0, nft)
+    ! call phaseshift(p0, nft, dt, tshift, fft)
     call phs_shift(p0, tshift, nft, nft, dt)
     call fft%Destory()
     rfi = p0(1:nt)
