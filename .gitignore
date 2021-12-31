@@ -1,0 +1,5 @@
+*.o
+*.mod
+make_rf
+rf.sac
+__pycache__/
