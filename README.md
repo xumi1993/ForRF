@@ -1,5 +1,5 @@
 # ForRF
-Time iterative deconvolution in fortran with Intel complier. The Intel MKL library is used for FFT
+Time iterative deconvolution in fortran with Intel complier. 
 ```
 mkdir build && cd build
 cmake .. && make
