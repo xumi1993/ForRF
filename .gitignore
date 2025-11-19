@@ -3,4 +3,5 @@
 make_rf
 rf.sac
 __pycache__/
-*.txt
+
+build/
