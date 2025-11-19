@@ -1,17 +1,52 @@
 module decon_mod
+  use iso_c_binding
   use fftpack, only: fft_cls
-    
-contains 
-  subroutine deconit(utr, wtr, dt, tshift, f0, &
-                     maxit, minderr, ipart, rfi)
-    ! -----------------------------------------
-    ! Time iterative deconvolution for receiver 
-    ! function calculation. Code refer to that in
-    ! CPS330.
-    ! 
-    ! Dec 31, 2021 Mijian Xu @ Nanyang Technological University
-    ! ------------------------------------------- 
+  implicit none
 
+contains 
+
+  ! ------------------------------------------------------------------
+  ! GPU Wrapper
+  ! ------------------------------------------------------------------
+  subroutine deconit_gpu(utr, wtr, dt, tshift, f0, &
+                     maxit, minderr, ipart, rfi)
+    implicit none
+    real, intent(in)                                            :: dt,tshift,f0,minderr
+    integer, intent(in)                                         :: ipart,maxit
+    double precision, dimension(:), intent(in)                  :: utr, wtr
+    double precision, dimension(:), allocatable, intent(out)    :: rfi
+    integer                                                     :: nft, nt
+
+    interface
+      subroutine deconit_cuda(utr, wtr, nt, nft, dt, tshift, f0, &
+                              maxit, minderr, ipart, rfi) bind(C, name="deconit_cuda")
+        use iso_c_binding
+        real(c_double), dimension(*), intent(in) :: utr, wtr
+        integer(c_int), value :: nt, nft
+        real(c_float), value :: dt, tshift, f0
+        integer(c_int), value :: maxit
+        real(c_float), value :: minderr
+        integer(c_int), value :: ipart
+        real(c_double), dimension(*), intent(out) :: rfi
+      end subroutine deconit_cuda
+    end interface
+
+    nt = size(utr)
+    nft=nt
+    call npow2(nft)
+    
+    if (allocated(rfi)) deallocate(rfi)
+    allocate(rfi(nt))
+    
+    call deconit_cuda(utr, wtr, nt, nft, dt, tshift, f0, maxit, minderr, ipart, rfi)
+
+  end subroutine deconit_gpu
+
+  ! ------------------------------------------------------------------
+  ! CPU Implementation (Original)
+  ! ------------------------------------------------------------------
+  subroutine deconit_cpu(utr, wtr, dt, tshift, f0, &
+                     maxit, minderr, ipart, rfi)
     implicit none
     type(fft_cls)                                               :: fftcls
     real, intent(in)                                            :: dt,tshift,f0,minderr
@@ -78,74 +113,69 @@ contains
       sumsq_i = sumsq
     enddo
     it = i
-    ! write(*, *) 'Iter=',it,'; RMS=',sumsq
+    
     call filter(p0, nft, dt, gauss)
     call phaseshift(p0, nft, dt, tshift)
-    ! call fft%Destory()
+    
+    if (allocated(rfi)) deallocate(rfi)
+    allocate(rfi(nt))
     rfi = p0(1:nt)
 
-  end subroutine deconit
+  end subroutine deconit_cpu
 
   subroutine filter(x, nft, dt, gauss)
     implicit  none
     type(fft_cls) :: fftcls
     integer :: nft
     real :: dt
-    ! double precision, dimension(nft), intent(in):: gauss
     double precision, dimension(nft), intent(inout):: x
-    complex, dimension(nft) :: z1, gauss
-    ! z1 = cmplx(x, 0.0)
+    complex, dimension(nft) :: z1
+    complex, dimension(nft), intent(in) :: gauss
 
     z1 = fftcls%fft(x, nft)
-    z1 = z1 * gauss *dt
-    ! z1 = z1/nft
+    z1 = z1 * gauss * dt
     x = fftcls%ifft(z1, nft)
-
   end subroutine filter
-
 
   subroutine gaussfilter(dt, nft, f0, gauss)
     implicit none
-    integer nft, nft21, i
-    real :: dt, f0, df
+    integer, intent(in) :: nft
+    real, intent(in) :: dt, f0
     complex, dimension(nft), intent(out) :: gauss
-    double precision, dimension(nft) :: gauss1
-
-    gauss1(:) = 0.
-    gauss =  cmplx(0., 0.)
+    integer :: i, nft21
+    real :: df, freq, val, pi
+    
+    pi = 3.14159265358979323846
     df = 1.0 / (nft * dt)
-    nft21 = 0.5 * nft + 1
-    do i = 1,nft21
-        gauss1(i) = exp(-0.25 * (2 * 3.1415926535 * df * (i-1) / f0) ** 2)/dt
-        ! print *, gauss(i) 
-    enddo
-    do i=nft21+1,nft
-        gauss1(i) = gauss1(2*nft21-i)
-    enddo
-    gauss = cmplx(gauss1)
-
+    nft21 = nft / 2 + 1
+    
+    do i = 1, nft21
+       freq = df * (i-1)
+       val = exp(-0.25 * (2.0 * pi * freq / f0)**2) / dt
+       gauss(i) = cmplx(val, 0.0)
+    end do
+    
+    do i = nft21 + 1, nft
+       gauss(i) = gauss(nft + 2 - i)
+    end do
   end subroutine gaussfilter
 
-
   subroutine correl(r, w, nft, rw)
+    use fftpack, only: fft_cls
     implicit none
     type(fft_cls) :: fftcls
-    ! Type(CLS_FFT) :: fftcls 
     integer, intent(in) :: nft
-    complex, dimension(nft) :: r1, w1, dat
-    double precision, dimension(nft), intent(in):: r, w
-    double precision, dimension(nft), intent(out):: rw
-    ! real, dimension()
-
-    r1 = fftcls%fft(r, nft)
-    w1 = fftcls%fft(w, nft)
-
-    dat = r1* conjg(w1)
-    ! dat = dat / nft
-    rw = fftcls%ifft(dat, nft)
-       
+    double precision, dimension(nft), intent(in) :: r, w
+    double precision, dimension(nft), intent(out) :: rw
+    complex, dimension(nft) :: cr, cw, crw
+    
+    cr = fftcls%fft(r, nft)
+    cw = fftcls%fft(w, nft)
+    
+    crw = cr * conjg(cw)
+    
+    rw = fftcls%ifft(crw, nft)
   end subroutine correl
-
 
   subroutine phaseshift(x, nft, dt, tshift)
     implicit none
@@ -161,16 +191,11 @@ contains
         p = 2*3.14159265*(i-1)*shift_i/nft
         z1(i) = z1(i) * cmplx(cos(p), -sin(p))
     enddo
-    ! z1 = z1/nft
     x = fftcls%ifft(z1, nft)
 
   end subroutine phaseshift
 
   subroutine npow2(npts)
-  !-----
-  !      Given npts, determine the N=2**m such that N >= npts
-  !      return the new ntps
-  !-----
     integer :: nsamp, npts
     nsamp = npts
     npts = 1
@@ -184,3 +209,4 @@ contains
         
   end subroutine npow2
 end module decon_mod
+
