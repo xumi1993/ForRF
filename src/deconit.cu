@@ -129,6 +129,11 @@ __global__ void update_r_freq_kernel(cufftComplex* r_freq, cufftComplex* g, cuff
     r_freq[k].y -= update_im;
 }
 
+// Kernel to update p0 at a specific index
+__global__ void update_p0_kernel(double* p0, int idx, double amp) {
+    p0[idx] += amp;
+}
+
 // Kernel for final phase shift and filter
 // P = P * G * dt * exp(i * 2pi * k * shift_i / N)
 __global__ void final_filter_shift_kernel(cufftComplex* p, cufftComplex* g, int nft, float dt, int shift_i) {
@@ -156,7 +161,10 @@ __global__ void final_filter_shift_kernel(cufftComplex* p, cufftComplex* g, int 
     p[k] = make_cuComplex(final_re, final_im);
 }
 
+
+
 // Helper to copy double to complex float
+
 __global__ void double2complex(const double* src, cufftComplex* dst, int n, int nft) {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i >= nft) return;
@@ -212,29 +220,115 @@ struct complex_norm_sq_functor {
     }
 };
 
-extern "C" void deconit_cuda(
-    double* h_utr, double* h_wtr, int nt, int nft, 
+// Functor for abs comparison
+struct AbsLess {
+    __host__ __device__
+    bool operator()(const double& a, const double& b) const {
+        return fabs(a) < fabs(b);
+    }
+};
+
+// Helper to set GPU device based on rank (Round-Robin)
+extern "C" void set_gpu_device(int rank) {
+    int device_count;
+    cudaError_t err = cudaGetDeviceCount(&device_count);
+    if (err != cudaSuccess || device_count == 0) {
+        fprintf(stderr, "Warning: No CUDA devices found or driver error.\n");
+        return;
+    }
+
+    int device_id = rank % device_count;
+    err = cudaSetDevice(device_id);
+    if (err != cudaSuccess) {
+        fprintf(stderr, "Error setting device %d for rank %d: %s\n", device_id, rank, cudaGetErrorString(err));
+    }
+}
+
+// Structure to hold persistent GPU resources
+struct DeconResources {
+    int nft;
+    int nt;
+    double *d_utr_time, *d_wtr_time, *d_rw_time, *d_p0_time, *d_rfi;
+    cufftComplex *d_gauss, *d_wf, *d_U_freq, *d_W_freq, *d_R_freq, *d_RW_freq, *d_P_freq;
+    cufftHandle plan;
+};
+
+extern "C" void* init_deconit_resources(int nt, int nft) {
+    DeconResources* res = new DeconResources();
+    res->nt = nt;
+    res->nft = nft;
+
+    // Allocate device memory once
+    CHECK_CUDA(cudaMalloc(&res->d_utr_time, nft * sizeof(double)));
+    CHECK_CUDA(cudaMalloc(&res->d_wtr_time, nft * sizeof(double)));
+    CHECK_CUDA(cudaMalloc(&res->d_rw_time, nft * sizeof(double)));
+    CHECK_CUDA(cudaMalloc(&res->d_p0_time, nft * sizeof(double)));
+    CHECK_CUDA(cudaMalloc(&res->d_rfi, nt * sizeof(double)));
+    
+    CHECK_CUDA(cudaMalloc(&res->d_gauss, nft * sizeof(cufftComplex)));
+    CHECK_CUDA(cudaMalloc(&res->d_wf, nft * sizeof(cufftComplex)));
+    CHECK_CUDA(cudaMalloc(&res->d_U_freq, nft * sizeof(cufftComplex)));
+    CHECK_CUDA(cudaMalloc(&res->d_W_freq, nft * sizeof(cufftComplex)));
+    CHECK_CUDA(cudaMalloc(&res->d_R_freq, nft * sizeof(cufftComplex)));
+    CHECK_CUDA(cudaMalloc(&res->d_RW_freq, nft * sizeof(cufftComplex)));
+    CHECK_CUDA(cudaMalloc(&res->d_P_freq, nft * sizeof(cufftComplex)));
+
+    // Create plan once
+    CHECK_CUFFT(cufftPlan1d(&res->plan, nft, CUFFT_C2C, 1));
+
+    return (void*)res;
+}
+
+extern "C" void free_deconit_resources(void* handle) {
+    if (handle == nullptr) return;
+    DeconResources* res = (DeconResources*)handle;
+
+    cudaFree(res->d_utr_time);
+    cudaFree(res->d_wtr_time);
+    cudaFree(res->d_rw_time);
+    cudaFree(res->d_p0_time);
+    cudaFree(res->d_rfi);
+    cudaFree(res->d_gauss);
+    cudaFree(res->d_wf);
+    cudaFree(res->d_U_freq);
+    cudaFree(res->d_W_freq);
+    cudaFree(res->d_R_freq);
+    cudaFree(res->d_RW_freq);
+    cudaFree(res->d_P_freq);
+    cufftDestroy(res->plan);
+
+    delete res;
+}
+
+extern "C" void deconit_cuda_exec(
+    void* handle,
+    double* h_utr, double* h_wtr, 
     float dt, float tshift, float f0, 
     int maxit, float minderr, int ipart, 
     double* h_rfi
 ) {
-    // Allocate device memory
-    double *d_utr_time, *d_wtr_time, *d_rw_time, *d_p0_time, *d_rfi;
-    cufftComplex *d_gauss, *d_wf, *d_U_freq, *d_W_freq, *d_R_freq, *d_RW_freq, *d_P_freq;
+    DeconResources* res = (DeconResources*)handle;
+    int nft = res->nft;
+    int nt = res->nt;
+    cufftHandle plan = res->plan;
+
+    // Unpack pointers
+    double *d_utr_time = res->d_utr_time;
+    double *d_wtr_time = res->d_wtr_time;
+    double *d_rw_time = res->d_rw_time;
+    double *d_p0_time = res->d_p0_time;
+    double *d_rfi = res->d_rfi;
     
-    CHECK_CUDA(cudaMalloc(&d_utr_time, nft * sizeof(double)));
-    CHECK_CUDA(cudaMalloc(&d_wtr_time, nft * sizeof(double)));
-    CHECK_CUDA(cudaMalloc(&d_rw_time, nft * sizeof(double)));
-    CHECK_CUDA(cudaMalloc(&d_p0_time, nft * sizeof(double)));
-    CHECK_CUDA(cudaMalloc(&d_rfi, nt * sizeof(double)));
-    
-    CHECK_CUDA(cudaMalloc(&d_gauss, nft * sizeof(cufftComplex)));
-    CHECK_CUDA(cudaMalloc(&d_wf, nft * sizeof(cufftComplex)));
-    CHECK_CUDA(cudaMalloc(&d_U_freq, nft * sizeof(cufftComplex)));
-    CHECK_CUDA(cudaMalloc(&d_W_freq, nft * sizeof(cufftComplex)));
-    CHECK_CUDA(cudaMalloc(&d_R_freq, nft * sizeof(cufftComplex)));
-    CHECK_CUDA(cudaMalloc(&d_RW_freq, nft * sizeof(cufftComplex)));
-    CHECK_CUDA(cudaMalloc(&d_P_freq, nft * sizeof(cufftComplex)));
+    cufftComplex *d_gauss = res->d_gauss;
+    cufftComplex *d_wf = res->d_wf;
+    cufftComplex *d_U_freq = res->d_U_freq;
+    cufftComplex *d_W_freq = res->d_W_freq;
+    cufftComplex *d_R_freq = res->d_R_freq;
+    cufftComplex *d_RW_freq = res->d_RW_freq;
+    cufftComplex *d_P_freq = res->d_P_freq;
+
+    int blockSize = 256;
+    int numBlocks = (nft + blockSize - 1) / blockSize;
     
     // Initialize p0 to 0
     CHECK_CUDA(cudaMemset(d_p0_time, 0, nft * sizeof(double)));
@@ -247,13 +341,6 @@ extern "C" void deconit_cuda(
         CHECK_CUDA(cudaMemset(d_utr_time + nt, 0, (nft - nt) * sizeof(double)));
         CHECK_CUDA(cudaMemset(d_wtr_time + nt, 0, (nft - nt) * sizeof(double)));
     }
-    
-    // Create plans
-    cufftHandle plan;
-    CHECK_CUFFT(cufftPlan1d(&plan, nft, CUFFT_C2C, 1));
-    
-    int blockSize = 256;
-    int numBlocks = (nft + blockSize - 1) / blockSize;
     
     // 1. Compute Gauss
     init_gauss_kernel<<<numBlocks, blockSize>>>(d_gauss, nft, dt, f0);
@@ -318,8 +405,7 @@ extern "C" void deconit_cuda(
         
         // Find max in rw[0..maxlag]
         thrust::device_ptr<double> t_rw(d_rw_time);
-        thrust::device_ptr<double> max_ptr = thrust::max_element(t_rw, t_rw + maxlag, 
-            [] __device__ (double a, double b) { return fabs(a) < fabs(b); });
+        thrust::device_ptr<double> max_ptr = thrust::max_element(t_rw, t_rw + maxlag, AbsLess());
         
         int idx = max_ptr - t_rw;
         double max_val = *max_ptr; // This is rw(idx)
@@ -329,13 +415,8 @@ extern "C" void deconit_cuda(
         double amp = (max_val / powerW) / dt;
         
         // Update p0
-        // We need to add amp to d_p0_time[idx]
-        // Since it's one value, we can do it from host or kernel.
-        // Let's use a small kernel or copy.
-        double current_p0;
-        CHECK_CUDA(cudaMemcpy(&current_p0, d_p0_time + idx, sizeof(double), cudaMemcpyDeviceToHost));
-        current_p0 += amp;
-        CHECK_CUDA(cudaMemcpy(d_p0_time + idx, &current_p0, sizeof(double), cudaMemcpyHostToDevice));
+        update_p0_kernel<<<1, 1>>>(d_p0_time, idx, amp);
+
         
         // Update R_freq
         update_r_freq_kernel<<<numBlocks, blockSize>>>(d_R_freq, d_gauss, d_wf, nft, dt, (float)amp, idx);
@@ -367,20 +448,5 @@ extern "C" void deconit_cuda(
     // Copy to output
     complex2double_scaled<<<numBlocks, blockSize>>>(d_P_freq, d_rfi, nt, 1.0f/nft); // Only copy nt
     CHECK_CUDA(cudaMemcpy(h_rfi, d_rfi, nt * sizeof(double), cudaMemcpyDeviceToHost));
-    
-    // Cleanup
-    cufftDestroy(plan);
-    cudaFree(d_utr_time);
-    cudaFree(d_wtr_time);
-    cudaFree(d_rw_time);
-    cudaFree(d_p0_time);
-    cudaFree(d_gauss);
-    cudaFree(d_wf);
-    cudaFree(d_U_freq);
-    cudaFree(d_W_freq);
-    cudaFree(d_R_freq);
-    cudaFree(d_RW_freq);
-    cudaFree(d_P_freq);
-    cudaFree(d_rfi);
 }
 

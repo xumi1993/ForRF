@@ -9,10 +9,6 @@ add_library(forrf_lib
 )
 
 target_link_libraries(forrf_lib PRIVATE CUDA::cufft)
-target_compile_options(forrf_lib PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--extended-lambda>)
-
-
-
 
 add_executable(forrf_test main.f90)
 target_link_libraries(forrf_test PRIVATE forrf_lib)

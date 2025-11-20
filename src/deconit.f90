@@ -3,11 +3,61 @@ module decon_mod
   use fftpack, only: fft_cls
   implicit none
 
-contains 
+  ! Persistent GPU handle
+  type(c_ptr), save :: gpu_handle = c_null_ptr
+  integer, save :: last_nft = -1
+
+  interface
+    subroutine set_gpu_device(rank) bind(C, name="set_gpu_device")
+      use iso_c_binding
+      integer(c_int), value :: rank
+    end subroutine set_gpu_device
+
+    function init_deconit_resources(nt, nft) bind(C, name="init_deconit_resources") result(res)
+      use iso_c_binding
+      integer(c_int), value :: nt, nft
+      type(c_ptr) :: res
+    end function init_deconit_resources
+
+    subroutine free_deconit_resources(handle) bind(C, name="free_deconit_resources")
+      use iso_c_binding
+      type(c_ptr), value :: handle
+    end subroutine free_deconit_resources
+
+    subroutine deconit_cuda_exec(handle, utr, wtr, dt, tshift, f0, &
+                            maxit, minderr, ipart, rfi) bind(C, name="deconit_cuda_exec")
+      use iso_c_binding
+      type(c_ptr), value :: handle
+      real(c_double), dimension(*), intent(in) :: utr, wtr
+      real(c_float), value :: dt, tshift, f0
+      integer(c_int), value :: maxit
+      real(c_float), value :: minderr
+      integer(c_int), value :: ipart
+      real(c_double), dimension(*), intent(out) :: rfi
+    end subroutine deconit_cuda_exec
+  end interface
+
+contains
+ 
 
   ! ------------------------------------------------------------------
   ! GPU Wrapper
   ! ------------------------------------------------------------------
+  subroutine set_gpu(rank)
+    implicit none
+    integer, intent(in) :: rank
+    call set_gpu_device(rank)
+  end subroutine set_gpu
+
+  subroutine finalize_deconit_gpu()
+    implicit none
+    if (c_associated(gpu_handle)) then
+      call free_deconit_resources(gpu_handle)
+      gpu_handle = c_null_ptr
+      last_nft = -1
+    endif
+  end subroutine finalize_deconit_gpu
+
   subroutine deconit_gpu(utr, wtr, dt, tshift, f0, &
                      maxit, minderr, ipart, rfi)
     implicit none
@@ -17,20 +67,6 @@ contains
     double precision, dimension(:), allocatable, intent(out)    :: rfi
     integer                                                     :: nft, nt
 
-    interface
-      subroutine deconit_cuda(utr, wtr, nt, nft, dt, tshift, f0, &
-                              maxit, minderr, ipart, rfi) bind(C, name="deconit_cuda")
-        use iso_c_binding
-        real(c_double), dimension(*), intent(in) :: utr, wtr
-        integer(c_int), value :: nt, nft
-        real(c_float), value :: dt, tshift, f0
-        integer(c_int), value :: maxit
-        real(c_float), value :: minderr
-        integer(c_int), value :: ipart
-        real(c_double), dimension(*), intent(out) :: rfi
-      end subroutine deconit_cuda
-    end interface
-
     nt = size(utr)
     nft=nt
     call npow2(nft)
@@ -38,7 +74,14 @@ contains
     if (allocated(rfi)) deallocate(rfi)
     allocate(rfi(nt))
     
-    call deconit_cuda(utr, wtr, nt, nft, dt, tshift, f0, maxit, minderr, ipart, rfi)
+    ! Initialize resources if needed or if size changed
+    if (.not. c_associated(gpu_handle) .or. nft /= last_nft) then
+      if (c_associated(gpu_handle)) call free_deconit_resources(gpu_handle)
+      gpu_handle = init_deconit_resources(nt, nft)
+      last_nft = nft
+    endif
+    
+    call deconit_cuda_exec(gpu_handle, utr, wtr, dt, tshift, f0, maxit, minderr, ipart, rfi)
 
   end subroutine deconit_gpu
 
